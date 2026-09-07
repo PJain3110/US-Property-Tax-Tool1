@@ -1,18 +1,20 @@
 import requests
 
 
-KGIS_GLOBAL_SEARCH_URL = (
+KGIS_PROPERTY_URL = (
     "https://www.kgis.org/arcgis/rest/services/"
-    "Maps/GlobalSearch/MapServer"
+    "Maps/Property/MapServer"
 )
 
+KGIS_PARCEL_LAYER = 2
 
-def query_kgis(layer_id, params):
+
+def query_kgis_parcels(params):
     """
-    Query a KGIS ArcGIS layer and return the complete response.
+    Query the KGIS Property > Parcels layer.
     """
 
-    url = f"{KGIS_GLOBAL_SEARCH_URL}/{layer_id}/query"
+    url = f"{KGIS_PROPERTY_URL}/{KGIS_PARCEL_LAYER}/query"
 
     base_params = {
         "f": "json",
@@ -35,49 +37,30 @@ def query_kgis(layer_id, params):
 
 def find_kgis_property(address):
     """
-    Diagnostic KGIS search.
-
-    We first query the Address layer and then
-    the Parcels layer using ArcGIS text search.
+    Search the KGIS parcel layer using the property address.
     """
 
-    results = []
+    try:
 
-    for layer_id, layer_name in [
-        (1, "Address"),
-        (0, "Parcels"),
-    ]:
+        data = query_kgis_parcels(
+            {
+                "where": (
+                    "FULL_ADDRESS LIKE "
+                    f"'%{address.split(',')[0]}%'"
+                )
+            }
+        )
 
-        try:
+        return {
+            "source": "KGIS",
+            "method": "Property Parcels Layer",
+            "response": data,
+        }
 
-            data = query_kgis(
-                layer_id,
-                {
-                    "text": address
-                }
-            )
+    except Exception as e:
 
-            results.append(
-                {
-                    "layer": layer_name,
-                    "layer_id": layer_id,
-                    "success": True,
-                    "response": data,
-                }
-            )
-
-        except Exception as e:
-
-            results.append(
-                {
-                    "layer": layer_name,
-                    "layer_id": layer_id,
-                    "success": False,
-                    "error": str(e),
-                }
-            )
-
-    return {
-        "source": "KGIS",
-        "results": results
-    }
+        return {
+            "source": "KGIS",
+            "method": "Property Parcels Layer",
+            "error": str(e),
+        }
