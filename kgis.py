@@ -7,9 +7,6 @@ KGIS_MAP_URL = "https://www.kgis.org/kgismaps/map.htm"
 def build_kgis_address_url(address):
     """
     Build the official KGIS Maps address-search URL.
-
-    KGIS documents that the ?address= parameter
-    automatically initiates an address search.
     """
 
     clean_address = address.strip()
@@ -22,39 +19,36 @@ def build_kgis_address_url(address):
 
 def find_kgis_property(address):
     """
-    Prepare an official KGIS address search.
+    Prepare an official KGIS address lookup.
 
-    Direct KGIS ArcGIS REST requests currently return
-    HTTP 403 from the Streamlit server, so we do not
-    attempt those requests here.
+    Direct ArcGIS REST requests from Streamlit are returning
+    HTTP 403, so we do not treat the REST endpoint as usable.
 
-    The public KGIS Maps application accepts an address
-    through the ?address= URL parameter.
+    KGIS's public Maps application accepts an address through
+    the address URL parameter and performs the actual search.
     """
 
-    kgis_url = build_kgis_address_url(address)
+    search_url = build_kgis_address_url(address)
 
     return {
         "source": "KGIS",
-        "method": "KGIS Public Address Search",
+        "method": "Public KGIS Address Search",
         "results": [
             {
-                "layer": "Public KGIS Address Search",
+                "layer": "KGIS Public Address Search",
                 "layer_id": None,
                 "success": True,
                 "response": {
-                    "address": address,
-                    "kgis_search_url": kgis_url,
-                    "status": (
-                        "KGIS public address search URL "
-                        "generated successfully."
+                    "input_address": address,
+                    "search_url": search_url,
+                    "parcel_id": None,
+                    "status": "External KGIS lookup required",
+                    "message": (
+                        "KGIS public search URL generated. "
+                        "Direct automated ArcGIS access is blocked "
+                        "with HTTP 403."
                     ),
-                    "note": (
-                        "Direct KGIS ArcGIS REST parcel "
-                        "requests are currently blocked "
-                        "with HTTP 403 from the application server."
-                    )
-                }
+                },
             }
-        ]
+        ],
     }
