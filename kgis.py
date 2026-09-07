@@ -1,91 +1,60 @@
-import requests
-from urllib.parse import urlencode
+from urllib.parse import quote
 
 
-KGIS_SERVICE_URL = (
-    "https://www.kgis.org/arcgis/rest/services/"
-    "Maps/Property/MapServer/2"
-)
-
-KGIS_PROXY_URL = (
-    "https://www.kgis.org/portalproxy/proxy.ashx"
-)
+KGIS_MAP_URL = "https://www.kgis.org/kgismaps/map.htm"
 
 
-def query_kgis(params):
+def build_kgis_address_url(address):
     """
-    Query the KGIS parcel service through the KGIS proxy.
+    Build the official KGIS Maps address-search URL.
+
+    KGIS documents that the ?address= parameter
+    automatically initiates an address search.
     """
 
-    query_string = urlencode(params)
+    clean_address = address.strip()
 
-    target_url = (
-        f"{KGIS_SERVICE_URL}/query"
-        f"?{query_string}"
+    return (
+        f"{KGIS_MAP_URL}"
+        f"?address={quote(clean_address)}"
     )
-
-    proxy_request_url = (
-        f"{KGIS_PROXY_URL}?{target_url}"
-    )
-
-    response = requests.get(
-        proxy_request_url,
-        timeout=30
-    )
-
-    response.raise_for_status()
-
-    return response.json()
 
 
 def find_kgis_property(address):
     """
-    Search the KGIS Property > Parcels layer.
+    Prepare an official KGIS address search.
 
-    This version uses the KGIS portal proxy rather
-    than directly calling the ArcGIS REST endpoint.
+    Direct KGIS ArcGIS REST requests currently return
+    HTTP 403 from the Streamlit server, so we do not
+    attempt those requests here.
+
+    The public KGIS Maps application accepts an address
+    through the ?address= URL parameter.
     """
 
-    street_address = address.split(",")[0].strip()
+    kgis_url = build_kgis_address_url(address)
 
-    params = {
-        "f": "json",
-        "where": (
-            "FULL_ADDRESS LIKE "
-            f"'%{street_address}%'"
-        ),
-        "outFields": "*",
-        "returnGeometry": "true",
+    return {
+        "source": "KGIS",
+        "method": "KGIS Public Address Search",
+        "results": [
+            {
+                "layer": "Public KGIS Address Search",
+                "layer_id": None,
+                "success": True,
+                "response": {
+                    "address": address,
+                    "kgis_search_url": kgis_url,
+                    "status": (
+                        "KGIS public address search URL "
+                        "generated successfully."
+                    ),
+                    "note": (
+                        "Direct KGIS ArcGIS REST parcel "
+                        "requests are currently blocked "
+                        "with HTTP 403 from the application server."
+                    )
+                }
+            }
+        ]
     }
-
-    try:
-
-        data = query_kgis(params)
-
-        return {
-            "source": "KGIS",
-            "method": "Property Parcels via KGIS Proxy",
-            "results": [
-                {
-                    "layer": "Property Parcels",
-                    "layer_id": 2,
-                    "success": True,
-                    "response": data,
-                }
-            ],
-        }
-
-    except Exception as e:
-
-        return {
-            "source": "KGIS",
-            "method": "Property Parcels via KGIS Proxy",
-            "results": [
-                {
-                    "layer": "Property Parcels",
-                    "layer_id": 2,
-                    "success": False,
-                    "error": str(e),
-                }
-            ],
-        }
