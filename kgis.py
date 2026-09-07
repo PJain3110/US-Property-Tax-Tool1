@@ -1,54 +1,75 @@
-from urllib.parse import quote
+import requests
 
 
-KGIS_MAP_URL = "https://www.kgis.org/kgismaps/map.htm"
+KGIS_GEOCORTEX_LAYER_URL = (
+    "https://www.kgis.org/geocortex/essentials/rest/sites/"
+    "City_Public_Service_Dept/map/mapservices/14/layers/27"
+)
 
 
-def build_kgis_address_url(address):
+def search_kgis_parcel(address):
     """
-    Build the official KGIS Maps address-search URL.
+    Search the KGIS parcel layer using the Geocortex REST API.
+
+    This is the KGIS parcel layer identified from the official
+    KGIS REST directory. The layer is queryable and exposes
+    parcel/address, owner, tax district, and assessment fields.
     """
 
+    # Keep the search focused on the street address portion.
     clean_address = address.strip()
 
-    return (
-        f"{KGIS_MAP_URL}"
-        f"?address={quote(clean_address)}"
+    params = {
+        "where": f"FULL_ADDRESS LIKE '%{clean_address}%'",
+        "outFields": (
+            "PARCELID,"
+            "FULL_ADDRESS,"
+            "KGIS_OWNER,"
+            "TAX_DISTRICT,"
+            "APPRAISED_LAND,"
+            "APPRAISED_BLDG,"
+            "APPRAISED_TOTAL,"
+            "ASSESSED_TOTAL"
+        ),
+        "returnGeometry": "true",
+        "f": "json",
+    }
+
+    response = requests.get(
+        f"{KGIS_GEOCORTEX_LAYER_URL}/query",
+        params=params,
+        timeout=30
     )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    return data
 
 
 def find_kgis_property(address):
     """
-    Prepare an official KGIS address lookup.
-
-    Direct ArcGIS REST requests from Streamlit are returning
-    HTTP 403, so we do not treat the REST endpoint as usable.
-
-    KGIS's public Maps application accepts an address through
-    the address URL parameter and performs the actual search.
+    Find the parcel associated with an address through KGIS.
     """
 
-    search_url = build_kgis_address_url(address)
+    try:
+        data = search_kgis_parcel(address)
 
-    return {
-        "source": "KGIS",
-        "method": "Public KGIS Address Search",
-        "results": [
-            {
-                "layer": "KGIS Public Address Search",
-                "layer_id": None,
-                "success": True,
-                "response": {
-                    "input_address": address,
-                    "search_url": search_url,
-                    "parcel_id": None,
-                    "status": "External KGIS lookup required",
-                    "message": (
-                        "KGIS public search URL generated. "
-                        "Direct automated ArcGIS access is blocked "
-                        "with HTTP 403."
-                    ),
-                },
-            }
-        ],
-    }
+        features = data.get("features", [])
+
+        return {
+            "source": "KGIS",
+            "method": "Geocortex Parcel Layer",
+            "results": features,
+            "raw_response": data,
+        }
+
+    except Exception as e:
+
+        return {
+            "source": "KGIS",
+            "method": "Geocortex Parcel Layer",
+            "results": [],
+            "error": str(e),
+        }
