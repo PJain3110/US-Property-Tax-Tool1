@@ -28,19 +28,63 @@ CENSUS_GEOCODER_URL = (
 )
 
 
+def parse_address(address):
+    """
+    Parse a standard U.S. address into:
+    street, city, state, ZIP.
+    """
+
+    parts = [
+        part.strip()
+        for part in address.split(",")
+    ]
+
+    if len(parts) < 3:
+        return None
+
+    street = parts[0]
+    city = parts[1]
+
+    state_zip = parts[2].split()
+
+    if len(state_zip) < 1:
+        return None
+
+    state = state_zip[0]
+
+    zip_code = ""
+
+    if len(state_zip) >= 2:
+        zip_code = state_zip[1]
+
+    return {
+        "street": street,
+        "city": city,
+        "state": state,
+        "zip": zip_code,
+    }
+
+
 def census_geocode(address):
     """
-    Geocode an address using the free U.S. Census Geocoder.
-
-    Returns latitude/longitude and the matched address.
+    Geocode an address using the Census structured
+    address endpoint.
     """
 
+    parsed = parse_address(address)
+
+    if not parsed:
+        return None
+
     url = (
-        f"{CENSUS_GEOCODER_URL}/locations/onelineaddress"
+        f"{CENSUS_GEOCODER_URL}/locations/address"
     )
 
     params = {
-        "address": address.strip(),
+        "street": parsed["street"],
+        "city": parsed["city"],
+        "state": parsed["state"],
+        "zip": parsed["zip"],
         "benchmark": "Public_AR_Current",
         "format": "json",
     }
@@ -99,21 +143,25 @@ def census_geocode(address):
 
 def census_geographies(address):
     """
-    Retrieve Census geographic jurisdictions for an address.
-
-    Layers:
-        14 = Elementary School District
-        16 = Secondary School District
-        18 = Unified School District
+    Retrieve Census geographic jurisdictions
+    for an address.
     """
 
     url = (
         f"{CENSUS_GEOCODER_URL}/geographies/"
-        "onelineaddress"
+        "address"
     )
 
+    parsed = parse_address(address)
+
+    if not parsed:
+        return None
+
     params = {
-        "address": address.strip(),
+        "street": parsed["street"],
+        "city": parsed["city"],
+        "state": parsed["state"],
+        "zip": parsed["zip"],
         "benchmark": "Public_AR_Current",
         "vintage": "Current_Current",
         "layers": "14,16,18",
@@ -129,25 +177,6 @@ def census_geographies(address):
     response.raise_for_status()
 
     return response.json()
-
-
-def extract_geography_results(data):
-    """
-    Convert Census geography response into a
-    simpler structure for the application.
-    """
-
-    result = data.get("result", {})
-
-    geographies = result.get(
-        "addressMatches",
-        []
-    )
-
-    if geographies:
-        return geographies
-
-    return []
 
 
 def get_parcel_source(state, county):
@@ -169,6 +198,7 @@ def get_parcel_source(state, county):
     for county_name, source in state_sources.items():
 
         if county_name.lower() in county.lower():
+
             return source
 
     return None
@@ -186,7 +216,10 @@ if address:
     ):
 
         try:
-            location = census_geocode(address)
+
+            location = census_geocode(
+                address
+            )
 
         except Exception as e:
 
@@ -252,6 +285,7 @@ if address:
         ):
 
             try:
+
                 geography_data = census_geographies(
                     address
                 )
@@ -269,7 +303,9 @@ if address:
                 "Census Geographic Jurisdictions"
             )
 
-            st.json(geography_data)
+            st.json(
+                geography_data
+            )
 
         parcel_source = get_parcel_source(
             location.get("state"),
@@ -304,17 +340,14 @@ if address:
             "this address."
         )
 
-        st.info(
-            "Try entering the address as "
-            "street, city, state, ZIP."
-        )
-
     st.divider()
 
-    st.subheader("KGIS Diagnostic")
+    st.subheader(
+        "Free Geocoder Diagnostic"
+    )
 
     with st.spinner(
-        "Checking KGIS parcel source..."
+        "Checking Photon..."
     ):
 
         try:
@@ -326,7 +359,7 @@ if address:
         except Exception as e:
 
             parcel_result = {
-                "source": "KGIS",
+                "source": "Photon",
                 "error": str(e)
             }
 
@@ -345,52 +378,40 @@ if address:
         if parcel_result.get("error"):
 
             st.error(
-                f"KGIS error: "
+                f"Geocoder error: "
                 f"{parcel_result.get('error')}"
             )
 
-        raw_results = parcel_result.get(
+        results = parcel_result.get(
             "results",
             []
         )
 
-        if raw_results:
+        if results:
 
-            for item in raw_results:
+            for item in results:
 
-                if isinstance(item, dict):
+                st.write(
+                    "### Geocoder Result"
+                )
 
-                    st.write(
-                        "### KGIS Result"
-                    )
+                st.write(
+                    f"**Address:** "
+                    f"{item.get('address')}"
+                )
 
-                    st.json(item)
+                st.write(
+                    f"**Latitude:** "
+                    f"{item.get('latitude')}"
+                )
 
-                else:
-
-                    st.write(item)
+                st.write(
+                    f"**Longitude:** "
+                    f"{item.get('longitude')}"
+                )
 
         else:
 
             st.warning(
-                "KGIS returned no diagnostic results."
+                "No geocoder results found."
             )
-
-        if parcel_result.get("raw_response"):
-
-            st.write(
-                "### Raw KGIS Response"
-            )
-
-            st.json(
-                parcel_result.get(
-                    "raw_response"
-                )
-            )
-
-    else:
-
-        st.error(
-            "No response was returned "
-            "by the KGIS connector."
-        )
