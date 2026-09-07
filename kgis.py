@@ -1,32 +1,35 @@
 import requests
+from urllib.parse import urlencode
 
 
-KGIS_PROPERTY_URL = (
+KGIS_SERVICE_URL = (
     "https://www.kgis.org/arcgis/rest/services/"
-    "Maps/Property/MapServer"
+    "Maps/Property/MapServer/2"
 )
 
-KGIS_PARCEL_LAYER = 2
+KGIS_PROXY_URL = (
+    "https://www.kgis.org/portalproxy/proxy.ashx"
+)
 
 
-def query_kgis_parcels(params):
+def query_kgis(params):
     """
-    Query the KGIS Property > Parcels layer.
+    Query the KGIS parcel service through the KGIS proxy.
     """
 
-    url = f"{KGIS_PROPERTY_URL}/{KGIS_PARCEL_LAYER}/query"
+    query_string = urlencode(params)
 
-    base_params = {
-        "f": "json",
-        "outFields": "*",
-        "returnGeometry": "true",
-    }
+    target_url = (
+        f"{KGIS_SERVICE_URL}/query"
+        f"?{query_string}"
+    )
 
-    base_params.update(params)
+    proxy_request_url = (
+        f"{KGIS_PROXY_URL}?{target_url}"
+    )
 
     response = requests.get(
-        url,
-        params=base_params,
+        proxy_request_url,
         timeout=30
     )
 
@@ -37,30 +40,52 @@ def query_kgis_parcels(params):
 
 def find_kgis_property(address):
     """
-    Search the KGIS parcel layer using the property address.
+    Search the KGIS Property > Parcels layer.
+
+    This version uses the KGIS portal proxy rather
+    than directly calling the ArcGIS REST endpoint.
     """
+
+    street_address = address.split(",")[0].strip()
+
+    params = {
+        "f": "json",
+        "where": (
+            "FULL_ADDRESS LIKE "
+            f"'%{street_address}%'"
+        ),
+        "outFields": "*",
+        "returnGeometry": "true",
+    }
 
     try:
 
-        data = query_kgis_parcels(
-            {
-                "where": (
-                    "FULL_ADDRESS LIKE "
-                    f"'%{address.split(',')[0]}%'"
-                )
-            }
-        )
+        data = query_kgis(params)
 
         return {
             "source": "KGIS",
-            "method": "Property Parcels Layer",
-            "response": data,
+            "method": "Property Parcels via KGIS Proxy",
+            "results": [
+                {
+                    "layer": "Property Parcels",
+                    "layer_id": 2,
+                    "success": True,
+                    "response": data,
+                }
+            ],
         }
 
     except Exception as e:
 
         return {
             "source": "KGIS",
-            "method": "Property Parcels Layer",
-            "error": str(e),
+            "method": "Property Parcels via KGIS Proxy",
+            "results": [
+                {
+                    "layer": "Property Parcels",
+                    "layer_id": 2,
+                    "success": False,
+                    "error": str(e),
+                }
+            ],
         }
