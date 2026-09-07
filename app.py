@@ -23,34 +23,42 @@ address = st.text_input(
 )
 
 
+CENSUS_GEOCODER_URL = (
+    "https://geocoding.geo.census.gov/geocoder"
+)
+
+
 def census_geocode(address):
+    """
+    Geocode an address using the free U.S. Census Geocoder.
+
+    Returns latitude/longitude and the matched address.
+    """
+
     url = (
-        "https://geocoding.geo.census.gov/geocoder/"
-        "locations/onelineaddress"
+        f"{CENSUS_GEOCODER_URL}/locations/onelineaddress"
     )
 
     params = {
-        "address": address,
+        "address": address.strip(),
         "benchmark": "Public_AR_Current",
-        "format": "json"
+        "format": "json",
     }
 
     response = requests.get(
         url,
         params=params,
-        timeout=30
+        timeout=30,
     )
 
     response.raise_for_status()
 
     data = response.json()
 
-    matches = data.get(
-        "result",
-        {}
-    ).get(
-        "addressMatches",
-        []
+    matches = (
+        data
+        .get("result", {})
+        .get("addressMatches", [])
     )
 
     if not matches:
@@ -69,64 +77,84 @@ def census_geocode(address):
     )
 
     return {
-        "matched_address": match.get("matchedAddress"),
+        "matched_address": match.get(
+            "matchedAddress"
+        ),
         "longitude": coordinates.get("x"),
         "latitude": coordinates.get("y"),
         "state": components.get("state"),
         "county": components.get("countyName"),
         "city": components.get("city"),
-        "zip": components.get("zip")
+        "zip": components.get("zip"),
+        "tigerline_id": (
+            match.get("tigerLine", {})
+            .get("tigerLineId")
+        ),
+        "tigerline_side": (
+            match.get("tigerLine", {})
+            .get("side")
+        ),
     }
 
 
-def nominatim_geocode(address):
-    url = "https://nominatim.openstreetmap.org/search"
+def census_geographies(address):
+    """
+    Retrieve Census geographic jurisdictions for an address.
+
+    Layers:
+        14 = Elementary School District
+        16 = Secondary School District
+        18 = Unified School District
+    """
+
+    url = (
+        f"{CENSUS_GEOCODER_URL}/geographies/"
+        "onelineaddress"
+    )
 
     params = {
-        "q": address,
+        "address": address.strip(),
+        "benchmark": "Public_AR_Current",
+        "vintage": "Current_Current",
+        "layers": "14,16,18",
         "format": "json",
-        "addressdetails": 1,
-        "limit": 1
-    }
-
-    headers = {
-        "User-Agent": "US-Property-Tax-Tool/1.0"
     }
 
     response = requests.get(
         url,
         params=params,
-        headers=headers,
-        timeout=30
+        timeout=30,
     )
 
     response.raise_for_status()
 
-    results = response.json()
+    return response.json()
 
-    if not results:
-        return None
 
-    result = results[0]
-    details = result.get("address", {})
+def extract_geography_results(data):
+    """
+    Convert Census geography response into a
+    simpler structure for the application.
+    """
 
-    return {
-        "matched_address": result.get("display_name"),
-        "longitude": result.get("lon"),
-        "latitude": result.get("lat"),
-        "state": details.get("state"),
-        "county": details.get("county"),
-        "city": (
-            details.get("city")
-            or details.get("town")
-            or details.get("village")
-            or details.get("municipality")
-        ),
-        "zip": details.get("postcode")
-    }
+    result = data.get("result", {})
+
+    geographies = result.get(
+        "addressMatches",
+        []
+    )
+
+    if geographies:
+        return geographies
+
+    return []
 
 
 def get_parcel_source(state, county):
+    """
+    Identify the configured parcel source
+    for a state/county combination.
+    """
 
     if not state or not county:
         return None
@@ -141,7 +169,6 @@ def get_parcel_source(state, county):
     for county_name, source in state_sources.items():
 
         if county_name.lower() in county.lower():
-
             return source
 
     return None
@@ -151,52 +178,27 @@ if address:
 
     st.divider()
 
-    # ---------------------------------------------------------
-    # LOCATION SEARCH
-    # ---------------------------------------------------------
-
     location = None
+    geography_data = None
 
-    with st.spinner("Searching address..."):
+    with st.spinner(
+        "Searching the U.S. Census Geocoder..."
+    ):
 
         try:
             location = census_geocode(address)
-        except Exception:
-            location = None
-
-        if not location:
-
-            try:
-                location = nominatim_geocode(address)
-            except Exception:
-                location = None
-
-    # ---------------------------------------------------------
-    # KGIS SEARCH
-    # ---------------------------------------------------------
-
-    with st.spinner("Searching parcel records..."):
-
-        try:
-
-            parcel_result = find_kgis_property(
-                address
-            )
 
         except Exception as e:
 
-            parcel_result = {
-                "source": "KGIS",
-                "error": str(e)
-            }
-
-    # ---------------------------------------------------------
-    # LOCATION
-    # ---------------------------------------------------------
+            st.error(
+                f"Census geocoder error: {e}"
+            )
 
     if location:
 
-        st.success("Address located.")
+        st.success(
+            "Address successfully geocoded."
+        )
 
         st.subheader("Location")
 
@@ -235,19 +237,109 @@ if address:
             f"{location.get('longitude') or 'Not available'}"
         )
 
-    # ---------------------------------------------------------
-    # KGIS RAW DIAGNOSTIC
-    # ---------------------------------------------------------
+        st.write(
+            f"**TIGER Line ID:** "
+            f"{location.get('tigerline_id') or 'Not available'}"
+        )
+
+        st.write(
+            f"**TIGER Line Side:** "
+            f"{location.get('tigerline_side') or 'Not available'}"
+        )
+
+        with st.spinner(
+            "Identifying Census geographic jurisdictions..."
+        ):
+
+            try:
+                geography_data = census_geographies(
+                    address
+                )
+
+            except Exception as e:
+
+                st.warning(
+                    "Census geographic lookup failed: "
+                    f"{e}"
+                )
+
+        if geography_data:
+
+            st.subheader(
+                "Census Geographic Jurisdictions"
+            )
+
+            st.json(geography_data)
+
+        parcel_source = get_parcel_source(
+            location.get("state"),
+            location.get("county")
+        )
+
+        if parcel_source:
+
+            st.subheader(
+                "Parcel Source"
+            )
+
+            st.write(
+                f"**Provider:** "
+                f"{parcel_source.get('provider')}"
+            )
+
+            st.write(
+                f"**Status:** "
+                f"{parcel_source.get('status')}"
+            )
+
+            st.write(
+                f"**Notes:** "
+                f"{parcel_source.get('notes')}"
+            )
+
+    else:
+
+        st.error(
+            "The Census Geocoder could not locate "
+            "this address."
+        )
+
+        st.info(
+            "Try entering the address as "
+            "street, city, state, ZIP."
+        )
 
     st.divider()
 
     st.subheader("KGIS Diagnostic")
+
+    with st.spinner(
+        "Checking KGIS parcel source..."
+    ):
+
+        try:
+
+            parcel_result = find_kgis_property(
+                address
+            )
+
+        except Exception as e:
+
+            parcel_result = {
+                "source": "KGIS",
+                "error": str(e)
+            }
 
     if parcel_result:
 
         st.write(
             f"**Source:** "
             f"{parcel_result.get('source')}"
+        )
+
+        st.write(
+            f"**Method:** "
+            f"{parcel_result.get('method')}"
         )
 
         if parcel_result.get("error"):
@@ -266,34 +358,17 @@ if address:
 
             for item in raw_results:
 
-                st.write(
-                    f"### Layer: "
-                    f"{item.get('layer')}"
-                )
+                if isinstance(item, dict):
 
-                st.write(
-                    f"**Layer ID:** "
-                    f"{item.get('layer_id')}"
-                )
-
-                st.write(
-                    f"**Success:** "
-                    f"{item.get('success')}"
-                )
-
-                if item.get("error"):
-
-                    st.error(
-                        item.get("error")
+                    st.write(
+                        "### KGIS Result"
                     )
 
-                if item.get("response"):
+                    st.json(item)
 
-                    response = item.get(
-                        "response"
-                    )
+                else:
 
-                    st.json(response)
+                    st.write(item)
 
         else:
 
@@ -301,8 +376,21 @@ if address:
                 "KGIS returned no diagnostic results."
             )
 
+        if parcel_result.get("raw_response"):
+
+            st.write(
+                "### Raw KGIS Response"
+            )
+
+            st.json(
+                parcel_result.get(
+                    "raw_response"
+                )
+            )
+
     else:
 
         st.error(
-            "No response was returned by the KGIS connector."
+            "No response was returned "
+            "by the KGIS connector."
         )
