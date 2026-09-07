@@ -1,75 +1,122 @@
 import requests
 
 
-KGIS_GEOCORTEX_LAYER_URL = (
-    "https://www.kgis.org/geocortex/essentials/rest/sites/"
-    "City_Public_Service_Dept/map/mapservices/14/layers/27"
-)
+PHOTON_URL = "https://photon.komoot.io/api/"
 
 
-def search_kgis_parcel(address):
+def photon_geocode(address):
     """
-    Search the KGIS parcel layer using the Geocortex REST API.
-
-    This is the KGIS parcel layer identified from the official
-    KGIS REST directory. The layer is queryable and exposes
-    parcel/address, owner, tax district, and assessment fields.
+    Free OpenStreetMap-based geocoder using Photon.
     """
-
-    # Keep the search focused on the street address portion.
-    clean_address = address.strip()
 
     params = {
-        "where": f"FULL_ADDRESS LIKE '%{clean_address}%'",
-        "outFields": (
-            "PARCELID,"
-            "FULL_ADDRESS,"
-            "KGIS_OWNER,"
-            "TAX_DISTRICT,"
-            "APPRAISED_LAND,"
-            "APPRAISED_BLDG,"
-            "APPRAISED_TOTAL,"
-            "ASSESSED_TOTAL"
-        ),
-        "returnGeometry": "true",
-        "f": "json",
+        "q": address.strip(),
+        "limit": 5,
+    }
+
+    headers = {
+        "User-Agent": (
+            "US-Property-Tax-Tool/1.0 "
+            "(property-tax-research-tool)"
+        )
     }
 
     response = requests.get(
-        f"{KGIS_GEOCORTEX_LAYER_URL}/query",
+        PHOTON_URL,
         params=params,
-        timeout=30
+        headers=headers,
+        timeout=30,
     )
 
     response.raise_for_status()
 
-    data = response.json()
-
-    return data
+    return response.json()
 
 
 def find_kgis_property(address):
     """
-    Find the parcel associated with an address through KGIS.
+    Temporarily use Photon to test the free
+    address-to-coordinate portion of the workflow.
+
+    Parcel identification will be added after
+    the coordinate lookup is confirmed.
     """
 
     try:
-        data = search_kgis_parcel(address)
 
-        features = data.get("features", [])
+        data = photon_geocode(address)
+
+        features = data.get(
+            "features",
+            []
+        )
+
+        results = []
+
+        for feature in features:
+
+            geometry = feature.get(
+                "geometry",
+                {}
+            )
+
+            properties = feature.get(
+                "properties",
+                {}
+            )
+
+            coordinates = geometry.get(
+                "coordinates",
+                []
+            )
+
+            results.append({
+                "address": properties.get(
+                    "name"
+                ),
+                "street": properties.get(
+                    "street"
+                ),
+                "housenumber": properties.get(
+                    "housenumber"
+                ),
+                "city": properties.get(
+                    "city"
+                ),
+                "state": properties.get(
+                    "state"
+                ),
+                "postcode": properties.get(
+                    "postcode"
+                ),
+                "country": properties.get(
+                    "country"
+                ),
+                "longitude": (
+                    coordinates[0]
+                    if len(coordinates) >= 2
+                    else None
+                ),
+                "latitude": (
+                    coordinates[1]
+                    if len(coordinates) >= 2
+                    else None
+                ),
+                "raw": feature,
+            })
 
         return {
-            "source": "KGIS",
-            "method": "Geocortex Parcel Layer",
-            "results": features,
+            "source": "Photon / OpenStreetMap",
+            "method": "Photon Geocoder",
+            "results": results,
             "raw_response": data,
         }
 
     except Exception as e:
 
         return {
-            "source": "KGIS",
-            "method": "Geocortex Parcel Layer",
+            "source": "Photon / OpenStreetMap",
+            "method": "Photon Geocoder",
             "results": [],
             "error": str(e),
         }
