@@ -1,5 +1,4 @@
 import requests
-import re
 
 
 KGIS_GLOBAL_SEARCH_URL = (
@@ -8,17 +7,17 @@ KGIS_GLOBAL_SEARCH_URL = (
 )
 
 
-def kgis_query(layer_id, params):
+def query_kgis(layer_id, params):
     """
-    Run a query against a KGIS ArcGIS layer.
+    Query a KGIS ArcGIS layer and return the complete response.
     """
 
     url = f"{KGIS_GLOBAL_SEARCH_URL}/{layer_id}/query"
 
     base_params = {
+        "f": "json",
         "outFields": "*",
         "returnGeometry": "true",
-        "f": "json"
     }
 
     base_params.update(params)
@@ -31,180 +30,54 @@ def kgis_query(layer_id, params):
 
     response.raise_for_status()
 
-    data = response.json()
-
-    if "error" in data:
-        return []
-
-    return data.get("features", [])
-
-
-def normalize_address(address):
-    """
-    Normalize an address for comparison.
-    """
-
-    address = address.upper().strip()
-
-    address = address.replace(",", " ")
-
-    address = re.sub(r"\s+", " ", address)
-
-    return address
-
-
-def address_parts(address):
-    """
-    Extract street number and street name.
-    """
-
-    normalized = normalize_address(address)
-
-    parts = normalized.split()
-
-    if len(parts) < 2:
-        return None, None
-
-    street_number = parts[0]
-
-    street_name_parts = []
-
-    for part in parts[1:]:
-
-        # Stop once we reach common city/state/ZIP components.
-        if part in {
-            "TN",
-            "Tennessee",
-            "NC",
-            "North",
-            "South",
-            "East",
-            "West"
-        }:
-            break
-
-        if re.match(r"^\d{5}(-\d{4})?$", part):
-            break
-
-        street_name_parts.append(part)
-
-    street_name = " ".join(street_name_parts)
-
-    return street_number, street_name
-
-
-def search_kgis_address(address):
-    """
-    Search KGIS Address layer using the ArcGIS
-    text parameter against the searchable layer.
-    """
-
-    normalized = normalize_address(address)
-
-    # ---------------------------------------------------------
-    # Full address search
-    # ---------------------------------------------------------
-
-    results = kgis_query(
-        1,
-        {
-            "text": normalized
-        }
-    )
-
-    if results:
-        return results
-
-    # ---------------------------------------------------------
-    # Street-number / street-name search
-    # ---------------------------------------------------------
-
-    street_number, street_name = address_parts(address)
-
-    if street_number and street_name:
-
-        results = kgis_query(
-            1,
-            {
-                "text": f"{street_number} {street_name}"
-            }
-        )
-
-        if results:
-            return results
-
-    return []
-
-
-def search_kgis_parcel(address):
-    """
-    Search KGIS Parcels layer using the searchable
-    FULL_ADDRESS field.
-    """
-
-    normalized = normalize_address(address)
-
-    # ---------------------------------------------------------
-    # Full address
-    # ---------------------------------------------------------
-
-    results = kgis_query(
-        0,
-        {
-            "text": normalized
-        }
-    )
-
-    if results:
-        return results
-
-    # ---------------------------------------------------------
-    # Street-number / street-name
-    # ---------------------------------------------------------
-
-    street_number, street_name = address_parts(address)
-
-    if street_number and street_name:
-
-        results = kgis_query(
-            0,
-            {
-                "text": f"{street_number} {street_name}"
-            }
-        )
-
-        if results:
-            return results
-
-    return []
+    return response.json()
 
 
 def find_kgis_property(address):
     """
-    Find a property in KGIS.
+    Diagnostic KGIS search.
 
-    Address layer is checked first.
-    Parcel layer is checked second.
+    We first query the Address layer and then
+    the Parcels layer using ArcGIS text search.
     """
 
-    address_results = search_kgis_address(address)
+    results = []
 
-    if address_results:
+    for layer_id, layer_name in [
+        (1, "Address"),
+        (0, "Parcels"),
+    ]:
 
-        return {
-            "source": "KGIS",
-            "method": "Address Layer",
-            "results": address_results
-        }
+        try:
 
-    parcel_results = search_kgis_parcel(address)
+            data = query_kgis(
+                layer_id,
+                {
+                    "text": address
+                }
+            )
 
-    if parcel_results:
+            results.append(
+                {
+                    "layer": layer_name,
+                    "layer_id": layer_id,
+                    "success": True,
+                    "response": data,
+                }
+            )
 
-        return {
-            "source": "KGIS",
-            "method": "Parcel Layer",
-            "results": parcel_results
-        }
+        except Exception as e:
 
-    return None
+            results.append(
+                {
+                    "layer": layer_name,
+                    "layer_id": layer_id,
+                    "success": False,
+                    "error": str(e),
+                }
+            )
+
+    return {
+        "source": "KGIS",
+        "results": results
+    }
