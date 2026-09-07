@@ -2,17 +2,21 @@ import streamlit as st
 import requests
 
 from parcel_sources import PARCEL_SOURCES
+from kgis import find_kgis_property
 
 
 st.set_page_config(
-    page_title="US Property Tax Tool",
-    page_icon="🏠",
-    layout="wide"
+    page_title="U.S. Property Tax Tool",
+    layout="centered"
 )
 
 
-st.title("🏠 US Property Tax Tool")
-st.subheader("Property Location & Tax Jurisdiction Research")
+st.title("U.S. Property Tax Tool")
+
+st.write(
+    "Enter a U.S. property address to identify the property, "
+    "county, and available parcel information."
+)
 
 
 address = st.text_input(
@@ -22,32 +26,46 @@ address = st.text_input(
 
 
 def census_geocode(address):
-
-    url = (
-        "https://geocoding.geo.census.gov/"
-        "geocoder/geographies/onelineaddress"
-    )
+    url = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
 
     params = {
         "address": address,
         "benchmark": "Public_AR_Current",
-        "vintage": "Current_Current",
         "format": "json"
     }
 
     response = requests.get(
         url,
         params=params,
-        timeout=20
+        timeout=30
     )
 
     response.raise_for_status()
 
-    return response.json()
+    data = response.json()
+
+    matches = data.get("result", {}).get("addressMatches", [])
+
+    if not matches:
+        return None
+
+    match = matches[0]
+
+    coordinates = match.get("coordinates", {})
+    address_components = match.get("addressComponents", {})
+
+    return {
+        "matched_address": match.get("matchedAddress"),
+        "longitude": coordinates.get("x"),
+        "latitude": coordinates.get("y"),
+        "state": address_components.get("state"),
+        "county": address_components.get("countyName"),
+        "city": address_components.get("city"),
+        "zip": address_components.get("zip")
+    }
 
 
 def nominatim_geocode(address):
-
     url = "https://nominatim.openstreetmap.org/search"
 
     params = {
@@ -58,431 +76,243 @@ def nominatim_geocode(address):
     }
 
     headers = {
-        "User-Agent": "US-Property-Tax-Tool1"
+        "User-Agent": "US-Property-Tax-Tool/1.0"
     }
 
     response = requests.get(
         url,
         params=params,
         headers=headers,
-        timeout=20
+        timeout=30
     )
 
     response.raise_for_status()
 
-    return response.json()
+    results = response.json()
 
+    if not results:
+        return None
 
-def find_location(address):
+    result = results[0]
+    details = result.get("address", {})
 
-    # ---------------------------------------------------------
-    # CENSUS GEOCODER
-    # ---------------------------------------------------------
-
-    census_data = census_geocode(address)
-
-    matches = (
-        census_data
-        .get("result", {})
-        .get("addressMatches", [])
-    )
-
-    if matches:
-
-        match = matches[0]
-
-        components = match.get(
-            "addressComponents",
-            {}
-        )
-
-        geographies = match.get(
-            "geographies",
-            {}
-        )
-
-        county_data = {}
-        state_data = {}
-        place_data = {}
-
-        for key, value in geographies.items():
-
-            if isinstance(value, list) and value:
-                value = value[0]
-
-            if not isinstance(value, dict):
-                continue
-
-            if "County" in key:
-                county_data = value
-
-            if (
-                "State" in key
-                and "County" not in key
-            ):
-                state_data = value
-
-            if "Place" in key:
-                place_data = value
-
-        return {
-            "source": "U.S. Census Geocoder",
-
-            "address": match.get(
-                "matchedAddress",
-                address
-            ),
-
-            "latitude": match.get(
-                "coordinates",
-                {}
-            ).get("y"),
-
-            "longitude": match.get(
-                "coordinates",
-                {}
-            ).get("x"),
-
-            "state": components.get(
-                "state"
-            ),
-
-            "county": components.get(
-                "county"
-            ),
-
-            "city": components.get(
-                "city"
-            ),
-
-            "zip": components.get(
-                "zip"
-            ),
-
-            "state_fips": (
-                state_data.get("GEOID")
-                or state_data.get("STATE")
-            ),
-
-            "county_fips": (
-                county_data.get("GEOID")
-                or county_data.get("COUNTY")
-            ),
-
-            "place_fips": (
-                place_data.get("GEOID")
-                or place_data.get("PLACE")
-            )
-        }
-
-    # ---------------------------------------------------------
-    # OPENSTREETMAP FALLBACK
-    # ---------------------------------------------------------
-
-    osm_data = nominatim_geocode(address)
-
-    if osm_data:
-
-        result = osm_data[0]
-
-        result_address = result.get(
-            "address",
-            {}
-        )
-
-        return {
-            "source": "OpenStreetMap",
-
-            "address": result.get(
-                "display_name",
-                address
-            ),
-
-            "latitude": result.get(
-                "lat"
-            ),
-
-            "longitude": result.get(
-                "lon"
-            ),
-
-            "state": result_address.get(
-                "state"
-            ),
-
-            "county": result_address.get(
-                "county"
-            ),
-
-            "city": (
-                result_address.get("city")
-                or result_address.get("town")
-                or result_address.get("village")
-                or result_address.get("municipality")
-            ),
-
-            "zip": result_address.get(
-                "postcode"
-            ),
-
-            "state_fips": None,
-            "county_fips": None,
-            "place_fips": None
-        }
-
-    return None
+    return {
+        "matched_address": result.get("display_name"),
+        "longitude": result.get("lon"),
+        "latitude": result.get("lat"),
+        "state": details.get("state"),
+        "county": details.get("county"),
+        "city": (
+            details.get("city")
+            or details.get("town")
+            or details.get("village")
+            or details.get("municipality")
+        ),
+        "zip": details.get("postcode")
+    }
 
 
 def get_parcel_source(state, county):
-
     if not state or not county:
         return None
 
-    state_sources = PARCEL_SOURCES.get(
-        state.upper(),
-        {}
-    )
+    state_sources = PARCEL_SOURCES.get(state.upper())
 
-    # Try exact county name first
-    source = state_sources.get(
-        county
-    )
+    if not state_sources:
+        return None
 
-    if source:
-        return source
+    for county_name, source in state_sources.items():
 
-    # Try county name without "County"
-    county_without_suffix = (
-        county
-        .replace(" County", "")
-        .strip()
-    )
-
-    for name, source_data in state_sources.items():
-
-        clean_name = (
-            name
-            .replace(" County", "")
-            .strip()
-        )
-
-        if clean_name.lower() == county_without_suffix.lower():
-            return source_data
+        if county_name.lower() in county.lower():
+            return source
 
     return None
 
 
-if st.button(
-    "Find Property",
-    type="primary"
-):
+if address:
 
-    if not address.strip():
+    st.divider()
 
-        st.warning(
-            "Please enter a property address."
-        )
+    with st.spinner("Searching property records..."):
 
-    else:
+        # ---------------------------------------------------------
+        # STEP 1: Try Census
+        # ---------------------------------------------------------
+
+        location = None
 
         try:
+            location = census_geocode(address)
+        except Exception:
+            location = None
 
-            with st.spinner(
-                "Identifying property..."
-            ):
+        # ---------------------------------------------------------
+        # STEP 2: Try OpenStreetMap
+        # ---------------------------------------------------------
 
-                location = find_location(
-                    address.strip()
+        if not location:
+
+            try:
+                location = nominatim_geocode(address)
+            except Exception:
+                location = None
+
+        # ---------------------------------------------------------
+        # STEP 3: Try configured parcel systems
+        #
+        # This is especially important when generic geocoders
+        # cannot locate the property.
+        # ---------------------------------------------------------
+
+        parcel_result = None
+
+        try:
+            parcel_result = find_kgis_property(address)
+        except Exception:
+            parcel_result = None
+
+        # ---------------------------------------------------------
+        # DISPLAY LOCATION INFORMATION
+        # ---------------------------------------------------------
+
+        if location:
+
+            st.success("Address located.")
+
+            st.subheader("Location")
+
+            st.write(
+                f"**Matched Address:** "
+                f"{location.get('matched_address')}"
+            )
+
+            st.write(
+                f"**State:** "
+                f"{location.get('state') or 'Not available'}"
+            )
+
+            st.write(
+                f"**County:** "
+                f"{location.get('county') or 'Not available'}"
+            )
+
+            st.write(
+                f"**City:** "
+                f"{location.get('city') or 'Not available'}"
+            )
+
+            st.write(
+                f"**ZIP:** "
+                f"{location.get('zip') or 'Not available'}"
+            )
+
+            st.write(
+                f"**Latitude:** "
+                f"{location.get('latitude') or 'Not available'}"
+            )
+
+            st.write(
+                f"**Longitude:** "
+                f"{location.get('longitude') or 'Not available'}"
+            )
+
+        # ---------------------------------------------------------
+        # DISPLAY PARCEL INFORMATION
+        # ---------------------------------------------------------
+
+        if parcel_result:
+
+            st.divider()
+
+            st.subheader("Parcel Information")
+
+            st.success(
+                f"Parcel source found: {parcel_result.get('source')}"
+            )
+
+            st.write(
+                f"**Method:** "
+                f"{parcel_result.get('method')}"
+            )
+
+            results = parcel_result.get("results", [])
+
+            if results:
+
+                for index, feature in enumerate(results, start=1):
+
+                    attributes = feature.get("attributes", {})
+                    geometry = feature.get("geometry", {})
+
+                    st.write(f"### Parcel Result {index}")
+
+                    # Display useful fields when available.
+                    for field in [
+                        "PARCELID",
+                        "FULL_ADDRESS",
+                        "OWNER",
+                        "OWNER_NAME",
+                        "SITE_ADDRESS"
+                    ]:
+
+                        value = attributes.get(field)
+
+                        if value not in [None, ""]:
+                            st.write(
+                                f"**{field}:** {value}"
+                            )
+
+                    if geometry:
+
+                        st.write(
+                            "**Parcel geometry:** Available"
+                        )
+
+        elif not location:
+
+            st.error(
+                "The address could not be located through the "
+                "available address and parcel systems."
+            )
+
+        # ---------------------------------------------------------
+        # PARCEL SOURCE STATUS
+        # ---------------------------------------------------------
+
+        if location:
+
+            state = location.get("state")
+            county = location.get("county")
+
+            parcel_source = get_parcel_source(
+                state,
+                county
+            )
+
+            st.divider()
+
+            st.subheader("Parcel Data Source")
+
+            if parcel_source:
+
+                st.write(
+                    f"**Provider:** "
+                    f"{parcel_source.get('provider')}"
                 )
 
-            if location is None:
+                st.write(
+                    f"**Status:** "
+                    f"{parcel_source.get('status')}"
+                )
 
-                st.error(
-                    "The address could not be "
-                    "located by the available "
-                    "geocoding services."
+                st.write(
+                    f"**Notes:** "
+                    f"{parcel_source.get('notes')}"
                 )
 
             else:
 
-                st.success(
-                    "Address located successfully."
-                )
-
-                st.caption(
-                    f"Location source: "
-                    f"{location['source']}"
-                )
-
-                st.divider()
-
-                # -------------------------------------------------
-                # PROPERTY LOCATION
-                # -------------------------------------------------
-
-                st.header(
-                    "Property Location"
-                )
-
-                col1, col2, col3, col4 = st.columns(4)
-
-                with col1:
-                    st.metric(
-                        "State",
-                        location["state"] or "—"
-                    )
-
-                with col2:
-                    st.metric(
-                        "County",
-                        location["county"] or "—"
-                    )
-
-                with col3:
-                    st.metric(
-                        "City",
-                        location["city"] or "—"
-                    )
-
-                with col4:
-                    st.metric(
-                        "ZIP Code",
-                        location["zip"] or "—"
-                    )
-
-                # -------------------------------------------------
-                # COORDINATES
-                # -------------------------------------------------
-
-                st.header(
-                    "Coordinates"
-                )
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    st.metric(
-                        "Latitude",
-                        location["latitude"] or "—"
-                    )
-
-                with col2:
-                    st.metric(
-                        "Longitude",
-                        location["longitude"] or "—"
-                    )
-
-                # -------------------------------------------------
-                # GEOGRAPHIC IDENTIFIERS
-                # -------------------------------------------------
-
-                st.header(
-                    "Government Geographic Identifiers"
-                )
-
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    st.metric(
-                        "State FIPS",
-                        location["state_fips"] or "—"
-                    )
-
-                with col2:
-                    st.metric(
-                        "County FIPS",
-                        location["county_fips"] or "—"
-                    )
-
-                with col3:
-                    st.metric(
-                        "Place FIPS",
-                        location["place_fips"] or "—"
-                    )
-
-                # -------------------------------------------------
-                # STANDARDIZED ADDRESS
-                # -------------------------------------------------
-
-                st.header(
-                    "Standardized Address"
-                )
-
                 st.info(
-                    location["address"]
+                    "A county-specific parcel provider has not "
+                    "yet been configured for this location."
                 )
-
-                # -------------------------------------------------
-                # PARCEL SOURCE
-                # -------------------------------------------------
-
-                st.header(
-                    "Parcel Research"
-                )
-
-                parcel_source = get_parcel_source(
-                    location["state"],
-                    location["county"]
-                )
-
-                if parcel_source:
-
-                    st.success(
-                        "A parcel data source is "
-                        "configured for this county."
-                    )
-
-                    st.write(
-                        f"**Provider:** "
-                        f"{parcel_source['provider']}"
-                    )
-
-                    st.write(
-                        f"**Status:** "
-                        f"{parcel_source['status']}"
-                    )
-
-                    st.caption(
-                        parcel_source["notes"]
-                    )
-
-                else:
-
-                    st.warning(
-                        "No parcel data source is "
-                        "currently configured for "
-                        "this county."
-                    )
-
-                    st.caption(
-                        "The application is designed "
-                        "to support county-specific "
-                        "parcel sources as they are added."
-                    )
-
-                # -------------------------------------------------
-                # TAX JURISDICTION ANALYSIS
-                # -------------------------------------------------
-
-                st.header(
-                    "Tax Jurisdiction Analysis"
-                )
-
-                st.info(
-                    "Parcel-level jurisdiction "
-                    "analysis will be performed "
-                    "after the parcel GIS connection "
-                    "is added."
-                )
-
-        except requests.exceptions.RequestException as e:
-
-            st.error(
-                f"Address service error: {e}"
-            )
-
-        except Exception as e:
-
-            st.error(
-                f"Unexpected error: {e}"
-            )
