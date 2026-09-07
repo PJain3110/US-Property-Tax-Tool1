@@ -1,14 +1,19 @@
 import streamlit as st
 import requests
 
+from parcel_sources import PARCEL_SOURCES
+
+
 st.set_page_config(
     page_title="US Property Tax Tool",
     page_icon="🏠",
     layout="wide"
 )
 
+
 st.title("🏠 US Property Tax Tool")
 st.subheader("Property Location & Tax Jurisdiction Research")
+
 
 address = st.text_input(
     "Property Address",
@@ -17,7 +22,11 @@ address = st.text_input(
 
 
 def census_geocode(address):
-    url = "https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
+
+    url = (
+        "https://geocoding.geo.census.gov/"
+        "geocoder/geographies/onelineaddress"
+    )
 
     params = {
         "address": address,
@@ -38,6 +47,7 @@ def census_geocode(address):
 
 
 def nominatim_geocode(address):
+
     url = "https://nominatim.openstreetmap.org/search"
 
     params = {
@@ -66,7 +76,7 @@ def nominatim_geocode(address):
 def find_location(address):
 
     # ---------------------------------------------------------
-    # 1. Try U.S. Census Geocoder
+    # CENSUS GEOCODER
     # ---------------------------------------------------------
 
     census_data = census_geocode(address)
@@ -91,8 +101,6 @@ def find_location(address):
             {}
         )
 
-        # Census geography names can vary slightly,
-        # so identify the relevant geography objects.
         county_data = {}
         state_data = {}
         place_data = {}
@@ -108,7 +116,10 @@ def find_location(address):
             if "County" in key:
                 county_data = value
 
-            if "State" in key and "County" not in key:
+            if (
+                "State" in key
+                and "County" not in key
+            ):
                 state_data = value
 
             if "Place" in key:
@@ -161,13 +172,11 @@ def find_location(address):
             "place_fips": (
                 place_data.get("GEOID")
                 or place_data.get("PLACE")
-            ),
-
-            "geographies": geographies
+            )
         }
 
     # ---------------------------------------------------------
-    # 2. Try OpenStreetMap
+    # OPENSTREETMAP FALLBACK
     # ---------------------------------------------------------
 
     osm_data = nominatim_geocode(address)
@@ -218,10 +227,47 @@ def find_location(address):
 
             "state_fips": None,
             "county_fips": None,
-            "place_fips": None,
-
-            "geographies": {}
+            "place_fips": None
         }
+
+    return None
+
+
+def get_parcel_source(state, county):
+
+    if not state or not county:
+        return None
+
+    state_sources = PARCEL_SOURCES.get(
+        state.upper(),
+        {}
+    )
+
+    # Try exact county name first
+    source = state_sources.get(
+        county
+    )
+
+    if source:
+        return source
+
+    # Try county name without "County"
+    county_without_suffix = (
+        county
+        .replace(" County", "")
+        .strip()
+    )
+
+    for name, source_data in state_sources.items():
+
+        clean_name = (
+            name
+            .replace(" County", "")
+            .strip()
+        )
+
+        if clean_name.lower() == county_without_suffix.lower():
+            return source_data
 
     return None
 
@@ -327,7 +373,7 @@ if st.button(
                     )
 
                 # -------------------------------------------------
-                # GOVERNMENT GEOGRAPHIC IDENTIFIERS
+                # GEOGRAPHIC IDENTIFIERS
                 # -------------------------------------------------
 
                 st.header(
@@ -367,7 +413,55 @@ if st.button(
                 )
 
                 # -------------------------------------------------
-                # NEXT STAGE
+                # PARCEL SOURCE
+                # -------------------------------------------------
+
+                st.header(
+                    "Parcel Research"
+                )
+
+                parcel_source = get_parcel_source(
+                    location["state"],
+                    location["county"]
+                )
+
+                if parcel_source:
+
+                    st.success(
+                        "A parcel data source is "
+                        "configured for this county."
+                    )
+
+                    st.write(
+                        f"**Provider:** "
+                        f"{parcel_source['provider']}"
+                    )
+
+                    st.write(
+                        f"**Status:** "
+                        f"{parcel_source['status']}"
+                    )
+
+                    st.caption(
+                        parcel_source["notes"]
+                    )
+
+                else:
+
+                    st.warning(
+                        "No parcel data source is "
+                        "currently configured for "
+                        "this county."
+                    )
+
+                    st.caption(
+                        "The application is designed "
+                        "to support county-specific "
+                        "parcel sources as they are added."
+                    )
+
+                # -------------------------------------------------
+                # TAX JURISDICTION ANALYSIS
                 # -------------------------------------------------
 
                 st.header(
@@ -375,15 +469,10 @@ if st.button(
                 )
 
                 st.info(
-                    "The property has been reduced "
-                    "to a geographic location. "
-                    "The next stage will identify "
-                    "the actual parcel and determine "
-                    "which taxing jurisdictions apply."
-                )
-
-                st.write(
-                    "Parcel research status: Pending"
+                    "Parcel-level jurisdiction "
+                    "analysis will be performed "
+                    "after the parcel GIS connection "
+                    "is added."
                 )
 
         except requests.exceptions.RequestException as e:
