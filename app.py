@@ -10,14 +10,12 @@ st.set_page_config(
     layout="centered"
 )
 
-
 st.title("U.S. Property Tax Tool")
 
 st.write(
     "Enter a U.S. property address to identify the property, "
     "county, and available parcel information."
 )
-
 
 address = st.text_input(
     "Property Address",
@@ -26,7 +24,10 @@ address = st.text_input(
 
 
 def census_geocode(address):
-    url = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
+    url = (
+        "https://geocoding.geo.census.gov/geocoder/"
+        "locations/onelineaddress"
+    )
 
     params = {
         "address": address,
@@ -44,24 +45,37 @@ def census_geocode(address):
 
     data = response.json()
 
-    matches = data.get("result", {}).get("addressMatches", [])
+    matches = data.get(
+        "result",
+        {}
+    ).get(
+        "addressMatches",
+        []
+    )
 
     if not matches:
         return None
 
     match = matches[0]
 
-    coordinates = match.get("coordinates", {})
-    address_components = match.get("addressComponents", {})
+    coordinates = match.get(
+        "coordinates",
+        {}
+    )
+
+    components = match.get(
+        "addressComponents",
+        {}
+    )
 
     return {
         "matched_address": match.get("matchedAddress"),
         "longitude": coordinates.get("x"),
         "latitude": coordinates.get("y"),
-        "state": address_components.get("state"),
-        "county": address_components.get("countyName"),
-        "city": address_components.get("city"),
-        "zip": address_components.get("zip")
+        "state": components.get("state"),
+        "county": components.get("countyName"),
+        "city": components.get("city"),
+        "zip": components.get("zip")
     }
 
 
@@ -113,10 +127,13 @@ def nominatim_geocode(address):
 
 
 def get_parcel_source(state, county):
+
     if not state or not county:
         return None
 
-    state_sources = PARCEL_SOURCES.get(state.upper())
+    state_sources = PARCEL_SOURCES.get(
+        state.upper()
+    )
 
     if not state_sources:
         return None
@@ -124,6 +141,7 @@ def get_parcel_source(state, county):
     for county_name, source in state_sources.items():
 
         if county_name.lower() in county.lower():
+
             return source
 
     return None
@@ -133,22 +151,18 @@ if address:
 
     st.divider()
 
-    with st.spinner("Searching property records..."):
+    # ---------------------------------------------------------
+    # LOCATION SEARCH
+    # ---------------------------------------------------------
 
-        # ---------------------------------------------------------
-        # STEP 1: Try Census
-        # ---------------------------------------------------------
+    location = None
 
-        location = None
+    with st.spinner("Searching address..."):
 
         try:
             location = census_geocode(address)
         except Exception:
             location = None
-
-        # ---------------------------------------------------------
-        # STEP 2: Try OpenStreetMap
-        # ---------------------------------------------------------
 
         if not location:
 
@@ -157,162 +171,138 @@ if address:
             except Exception:
                 location = None
 
-        # ---------------------------------------------------------
-        # STEP 3: Try configured parcel systems
-        #
-        # This is especially important when generic geocoders
-        # cannot locate the property.
-        # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # KGIS SEARCH
+    # ---------------------------------------------------------
 
-        parcel_result = None
+    with st.spinner("Searching parcel records..."):
 
         try:
-            parcel_result = find_kgis_property(address)
-        except Exception:
-            parcel_result = None
 
-        # ---------------------------------------------------------
-        # DISPLAY LOCATION INFORMATION
-        # ---------------------------------------------------------
-
-        if location:
-
-            st.success("Address located.")
-
-            st.subheader("Location")
-
-            st.write(
-                f"**Matched Address:** "
-                f"{location.get('matched_address')}"
+            parcel_result = find_kgis_property(
+                address
             )
 
-            st.write(
-                f"**State:** "
-                f"{location.get('state') or 'Not available'}"
-            )
+        except Exception as e:
 
-            st.write(
-                f"**County:** "
-                f"{location.get('county') or 'Not available'}"
-            )
+            parcel_result = {
+                "source": "KGIS",
+                "error": str(e)
+            }
 
-            st.write(
-                f"**City:** "
-                f"{location.get('city') or 'Not available'}"
-            )
+    # ---------------------------------------------------------
+    # LOCATION
+    # ---------------------------------------------------------
 
-            st.write(
-                f"**ZIP:** "
-                f"{location.get('zip') or 'Not available'}"
-            )
+    if location:
 
-            st.write(
-                f"**Latitude:** "
-                f"{location.get('latitude') or 'Not available'}"
-            )
+        st.success("Address located.")
 
-            st.write(
-                f"**Longitude:** "
-                f"{location.get('longitude') or 'Not available'}"
-            )
+        st.subheader("Location")
 
-        # ---------------------------------------------------------
-        # DISPLAY PARCEL INFORMATION
-        # ---------------------------------------------------------
+        st.write(
+            f"**Matched Address:** "
+            f"{location.get('matched_address')}"
+        )
 
-        if parcel_result:
+        st.write(
+            f"**State:** "
+            f"{location.get('state') or 'Not available'}"
+        )
 
-            st.divider()
+        st.write(
+            f"**County:** "
+            f"{location.get('county') or 'Not available'}"
+        )
 
-            st.subheader("Parcel Information")
+        st.write(
+            f"**City:** "
+            f"{location.get('city') or 'Not available'}"
+        )
 
-            st.success(
-                f"Parcel source found: {parcel_result.get('source')}"
-            )
+        st.write(
+            f"**ZIP:** "
+            f"{location.get('zip') or 'Not available'}"
+        )
 
-            st.write(
-                f"**Method:** "
-                f"{parcel_result.get('method')}"
-            )
+        st.write(
+            f"**Latitude:** "
+            f"{location.get('latitude') or 'Not available'}"
+        )
 
-            results = parcel_result.get("results", [])
+        st.write(
+            f"**Longitude:** "
+            f"{location.get('longitude') or 'Not available'}"
+        )
 
-            if results:
+    # ---------------------------------------------------------
+    # KGIS RAW DIAGNOSTIC
+    # ---------------------------------------------------------
 
-                for index, feature in enumerate(results, start=1):
+    st.divider()
 
-                    attributes = feature.get("attributes", {})
-                    geometry = feature.get("geometry", {})
+    st.subheader("KGIS Diagnostic")
 
-                    st.write(f"### Parcel Result {index}")
+    if parcel_result:
 
-                    # Display useful fields when available.
-                    for field in [
-                        "PARCELID",
-                        "FULL_ADDRESS",
-                        "OWNER",
-                        "OWNER_NAME",
-                        "SITE_ADDRESS"
-                    ]:
+        st.write(
+            f"**Source:** "
+            f"{parcel_result.get('source')}"
+        )
 
-                        value = attributes.get(field)
-
-                        if value not in [None, ""]:
-                            st.write(
-                                f"**{field}:** {value}"
-                            )
-
-                    if geometry:
-
-                        st.write(
-                            "**Parcel geometry:** Available"
-                        )
-
-        elif not location:
+        if parcel_result.get("error"):
 
             st.error(
-                "The address could not be located through the "
-                "available address and parcel systems."
+                f"KGIS error: "
+                f"{parcel_result.get('error')}"
             )
 
-        # ---------------------------------------------------------
-        # PARCEL SOURCE STATUS
-        # ---------------------------------------------------------
+        raw_results = parcel_result.get(
+            "results",
+            []
+        )
 
-        if location:
+        if raw_results:
 
-            state = location.get("state")
-            county = location.get("county")
+            for item in raw_results:
 
-            parcel_source = get_parcel_source(
-                state,
-                county
+                st.write(
+                    f"### Layer: "
+                    f"{item.get('layer')}"
+                )
+
+                st.write(
+                    f"**Layer ID:** "
+                    f"{item.get('layer_id')}"
+                )
+
+                st.write(
+                    f"**Success:** "
+                    f"{item.get('success')}"
+                )
+
+                if item.get("error"):
+
+                    st.error(
+                        item.get("error")
+                    )
+
+                if item.get("response"):
+
+                    response = item.get(
+                        "response"
+                    )
+
+                    st.json(response)
+
+        else:
+
+            st.warning(
+                "KGIS returned no diagnostic results."
             )
 
-            st.divider()
+    else:
 
-            st.subheader("Parcel Data Source")
-
-            if parcel_source:
-
-                st.write(
-                    f"**Provider:** "
-                    f"{parcel_source.get('provider')}"
-                )
-
-                st.write(
-                    f"**Status:** "
-                    f"{parcel_source.get('status')}"
-                )
-
-                st.write(
-                    f"**Notes:** "
-                    f"{parcel_source.get('notes')}"
-                )
-
-            else:
-
-                st.info(
-                    "A county-specific parcel provider has not "
-                    "yet been configured for this location."
-                )
+        st.error(
+            "No response was returned by the KGIS connector."
+        )
