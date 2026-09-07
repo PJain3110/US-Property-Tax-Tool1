@@ -8,7 +8,7 @@ st.set_page_config(
 )
 
 st.title("🏠 US Property Tax Tool")
-st.subheader("Step 1 — Property Location Identification")
+st.subheader("Property Location & Tax Jurisdiction Research")
 
 address = st.text_input(
     "Property Address",
@@ -16,18 +16,10 @@ address = st.text_input(
 )
 
 
-def geocode_address(address):
+def census_geocode(address):
+    url = "https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress"
 
-    # ---------------------------------
-    # 1. Try U.S. Census Geocoder
-    # ---------------------------------
-
-    census_url = (
-        "https://geocoding.geo.census.gov/"
-        "geocoder/geographies/onelineaddress"
-    )
-
-    census_params = {
+    params = {
         "address": address,
         "benchmark": "Public_AR_Current",
         "vintage": "Current_Current",
@@ -35,14 +27,46 @@ def geocode_address(address):
     }
 
     response = requests.get(
-        census_url,
-        params=census_params,
+        url,
+        params=params,
         timeout=20
     )
 
     response.raise_for_status()
 
-    census_data = response.json()
+    return response.json()
+
+
+def nominatim_geocode(address):
+    url = "https://nominatim.openstreetmap.org/search"
+
+    params = {
+        "q": address,
+        "format": "json",
+        "addressdetails": 1,
+        "limit": 1
+    }
+
+    headers = {
+        "User-Agent": "US-Property-Tax-Tool1"
+    }
+
+    response = requests.get(
+        url,
+        params=params,
+        headers=headers,
+        timeout=20
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+def find_location(address):
+
+    # Try Census first
+    census_data = census_geocode(address)
 
     census_matches = (
         census_data
@@ -51,91 +75,75 @@ def geocode_address(address):
     )
 
     if census_matches:
-        return census_data, "U.S. Census Geocoder"
 
-
-    # ---------------------------------
-    # 2. If Census fails, try Nominatim
-    # ---------------------------------
-
-    nominatim_url = (
-        "https://nominatim.openstreetmap.org/search"
-    )
-
-    nominatim_params = {
-        "q": address,
-        "format": "json",
-        "addressdetails": 1,
-        "limit": 1
-    }
-
-    nominatim_headers = {
-        "User-Agent": "US-Property-Tax-Tool1"
-    }
-
-    response = requests.get(
-        nominatim_url,
-        params=nominatim_params,
-        headers=nominatim_headers,
-        timeout=20
-    )
-
-    response.raise_for_status()
-
-    nominatim_data = response.json()
-
-    if nominatim_data:
-
-        result = nominatim_data[0]
+        match = census_matches[0]
 
         return {
-            "result": {
-                "addressMatches": [
-                    {
-                        "matchedAddress": result.get(
-                            "display_name",
-                            address
-                        ),
-                        "coordinates": {
-                            "x": result.get("lon"),
-                            "y": result.get("lat")
-                        },
-                        "addressComponents": {
-                            "city": result.get(
-                                "address", {}
-                            ).get("city")
-                            or result.get(
-                                "address", {}
-                            ).get("town")
-                            or result.get(
-                                "address", {}
-                            ).get("village"),
-                            "state": result.get(
-                                "address", {}
-                            ).get("state"),
-                            "zip": result.get(
-                                "address", {}
-                            ).get("postcode")
-                        },
-                        "geographies": {}
-                    }
-                ]
-            }
-        }, "OpenStreetMap"
-
-
-    # ---------------------------------
-    # 3. Nothing found
-    # ---------------------------------
-
-    return {
-        "result": {
-            "addressMatches": []
+            "source": "U.S. Census Geocoder",
+            "address": match.get(
+                "matchedAddress",
+                address
+            ),
+            "latitude": match.get(
+                "coordinates",
+                {}
+            ).get("y"),
+            "longitude": match.get(
+                "coordinates",
+                {}
+            ).get("x"),
+            "components": match.get(
+                "addressComponents",
+                {}
+            ),
+            "geographies": match.get(
+                "geographies",
+                {}
+            )
         }
-    }, None
+
+    # Try OpenStreetMap second
+    osm_data = nominatim_geocode(address)
+
+    if osm_data:
+
+        result = osm_data[0]
+        result_address = result.get(
+            "address",
+            {}
+        )
+
+        return {
+            "source": "OpenStreetMap",
+            "address": result.get(
+                "display_name",
+                address
+            ),
+            "latitude": result.get("lat"),
+            "longitude": result.get("lon"),
+            "components": {
+                "city": (
+                    result_address.get("city")
+                    or result_address.get("town")
+                    or result_address.get("village")
+                ),
+                "state": result_address.get(
+                    "state"
+                ),
+                "zip": result_address.get(
+                    "postcode"
+                )
+            },
+            "geographies": {}
+        }
+
+    return None
 
 
-if st.button("Find Property", type="primary"):
+if st.button(
+    "Find Property",
+    type="primary"
+):
 
     if not address.strip():
 
@@ -148,67 +156,38 @@ if st.button("Find Property", type="primary"):
         try:
 
             with st.spinner(
-                "Looking up property..."
+                "Identifying property..."
             ):
 
-                data, source = geocode_address(
+                location = find_location(
                     address.strip()
                 )
 
-            matches = (
-                data
-                .get("result", {})
-                .get("addressMatches", [])
-            )
-
-            if not matches:
+            if location is None:
 
                 st.error(
-                    "No matching address was found. "
-                    "Please check the address and try again."
+                    "The address could not be "
+                    "located by the available "
+                    "geocoding services."
+                )
+
+                st.info(
+                    "The next version will use "
+                    "county-level parcel GIS data "
+                    "for properties that cannot be "
+                    "resolved through standard "
+                    "address geocoding."
                 )
 
             else:
 
-                match = matches[0]
-
-                address_components = match.get(
-                    "addressComponents",
-                    {}
-                )
-
-                coordinates = match.get(
-                    "coordinates",
-                    {}
-                )
-
-                geographies = match.get(
-                    "geographies",
-                    {}
-                )
-
-                state_geo = None
-                county_geo = None
-                place_geo = None
-
-                for key, values in geographies.items():
-
-                    if not values:
-                        continue
-
-                    if "States" in key:
-                        state_geo = values[0]
-
-                    elif "Counties" in key:
-                        county_geo = values[0]
-
-                    elif "Places" in key:
-                        place_geo = values[0]
-
-
                 st.success(
-                    f"Property located successfully "
-                    f"using {source}."
+                    "Address located successfully."
+                )
+
+                st.caption(
+                    f"Location source: "
+                    f"{location['source']}"
                 )
 
                 st.divider()
@@ -223,123 +202,92 @@ if st.button("Find Property", type="primary"):
 
                     st.metric(
                         "State",
-                        address_components.get(
+                        location[
+                            "components"
+                        ].get(
                             "state",
                             "—"
                         )
-                    )
-
-                    st.metric(
-                        "County",
-                        county_geo.get(
-                            "NAME",
-                            "—"
-                        )
-                        if county_geo
-                        else "Not available"
                     )
 
                 with col2:
 
                     st.metric(
                         "City",
-                        address_components.get(
+                        location[
+                            "components"
+                        ].get(
                             "city",
                             "—"
                         )
                     )
 
+                with col3:
+
                     st.metric(
                         "ZIP Code",
-                        address_components.get(
+                        location[
+                            "components"
+                        ].get(
                             "zip",
                             "—"
                         )
                     )
 
-                with col3:
-
-                    st.metric(
-                        "Latitude",
-                        coordinates.get(
-                            "y",
-                            "—"
-                        )
-                    )
-
-                    st.metric(
-                        "Longitude",
-                        coordinates.get(
-                            "x",
-                            "—"
-                        )
-                    )
-
-
                 st.header(
-                    "Geographic Identifiers"
+                    "Coordinates"
                 )
 
-                col1, col2, col3 = st.columns(3)
+                col1, col2 = st.columns(2)
 
                 with col1:
 
                     st.metric(
-                        "State FIPS",
-                        state_geo.get(
-                            "STATE",
-                            "—"
-                        )
-                        if state_geo
-                        else "Not available"
+                        "Latitude",
+                        location[
+                            "latitude"
+                        ]
+                        or "—"
                     )
 
                 with col2:
 
                     st.metric(
-                        "County FIPS",
-                        county_geo.get(
-                            "COUNTY",
-                            "—"
-                        )
-                        if county_geo
-                        else "Not available"
+                        "Longitude",
+                        location[
+                            "longitude"
+                        ]
+                        or "—"
                     )
-
-                with col3:
-
-                    st.metric(
-                        "Place FIPS",
-                        place_geo.get(
-                            "PLACE",
-                            "—"
-                        )
-                        if place_geo
-                        else "Not available"
-                    )
-
 
                 st.header(
                     "Standardized Address"
                 )
 
                 st.info(
-                    match.get(
-                        "matchedAddress",
-                        "No standardized address returned."
-                    )
+                    location[
+                        "address"
+                    ]
                 )
 
+                st.header(
+                    "Tax Jurisdiction Analysis"
+                )
+
+                st.warning(
+                    "Parcel and taxing-jurisdiction "
+                    "research will be added in the "
+                    "next step."
+                )
 
         except requests.exceptions.RequestException as e:
 
             st.error(
-                f"Unable to connect to the "
-                f"address service: {e}"
+                f"Address service error: {e}"
             )
 
         except Exception as e:
 
             st.error(
-                f"An unexpected error occurred: {e}"
+                f"Unexpected error: {e}"
             )
